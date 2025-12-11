@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Creature Garden</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{overflow:hidden;font-family:sans-serif;background:#000;}
+#canvas{display:block;width:100vw;height:100vh;background:linear-gradient(135deg,#0f2027 0%,#203a43 50%,#2c5364 100%);}
+#controls{position:fixed;top:20px;left:20px;background:rgba(0,0,0,0.8);padding:20px;border-radius:10px;color:white;z-index:1000;max-width:320px;}
+button{width:100%;padding:12px;border:none;border-radius:5px;background:#667eea;color:white;font-weight:600;cursor:pointer;margin-bottom:8px;}
+.stats{font-size:12px;color:#4ade80;margin-top:5px;}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="controls">
+    <button id="startBtn">Start</button>
+    <div class="stats" id="stats">Score: 0 | Creatures: 0 | Food: 0</div>
+</div>
+
+<script>
+const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d');
+let creatures=[],food=[],score=0;
+let cursorX=window.innerWidth/2,cursorY=window.innerHeight/2;
+let isRunning=false;
+
+function resizeCanvas(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}
+window.addEventListener('resize',resizeCanvas); resizeCanvas();
+
+// ----- Cursor tracking -----
+function updateCursor(x,y){
+    cursorX=Math.max(0,Math.min(canvas.width,x));
+    cursorY=Math.max(0,Math.min(canvas.height,y));
+}
+canvas.addEventListener('mousemove',e=>updateCursor(e.clientX,e.clientY));
+canvas.addEventListener('click',()=>food.push(new Food(cursorX,cursorY)));
+canvas.addEventListener('touchmove',e=>{
+    if(e.touches.length>0){
+        updateCursor(e.touches[0].clientX,e.touches[0].clientY);
+    }
+});
+canvas.addEventListener('touchstart',e=>{
+    if(e.touches.length>0) food.push(new Food(e.touches[0].clientX,e.touches[0].clientY));
+    e.preventDefault();
+},{passive:false});
+
+// ----- Classes -----
+class Creature{
+    constructor(x,y){
+        this.x=x; this.y=y;
+        this.size=15+Math.random()*10;
+        this.vx=(Math.random()-0.5)*2;
+        this.vy=(Math.random()-0.5)*2;
+        this.age=0; this.maxAge=5000+Math.random()*2000;
+        this.hunger=0; 
+        const numTentacles=6+Math.floor(Math.random()*3);
+        this.tentacles=[];
+        for(let i=0;i<numTentacles;i++) this.tentacles.push({angle:(Math.PI*2/numTentacles)*i,length:this.size*1.5,segments:5});
+        this.color=`hsl(${Math.floor(Math.random()*360)},60%,45%)`;
+    }
+    update(){
+        this.age++;
+        this.hunger+=0.001; 
+
+        // Move toward nearest food
+        let nearest=null, nearestDist=Infinity;
+        for(const f of food){
+            const dx=f.x-this.x,dy=f.y-this.y,d=Math.hypot(dx,dy);
+            if(d<nearestDist){ nearestDist=d; nearest=f; }
+        }
+        if(nearest){
+            const dx=nearest.x-this.x,dy=nearest.y-this.y,d=Math.hypot(dx,dy);
+            this.vx+=(dx/d)*0.05; this.vy+=(dy/d)*0.05;
+            if(d<this.size+nearest.size){
+                food.splice(food.indexOf(nearest),1);
+                this.size+=0.5;
+                this.hunger=Math.max(0,this.hunger-0.5); 
+                score+=10;
+            }
+        }
+
+        // Mildly react to cursor
+        const dxC=this.x-cursorX, dyC=this.y-cursorY, distC=Math.hypot(dxC,dyC);
+        const fearRadius=100;
+        if(distC<fearRadius){
+            const factor=(fearRadius-distC)/fearRadius*0.03;
+            this.vx+=dxC/distC*factor;
+            this.vy+=dyC/distC*factor;
+        }
+
+        // Repel other creatures
+        for(const other of creatures){
+            if(other===this) continue;
+            const dx=this.x-other.x, dy=this.y-other.y;
+            const dist=Math.hypot(dx,dy);
+            const minDist=this.size+other.size+4;
+            if(dist<minDist && dist>0){
+                const repel=(minDist-dist)/minDist*0.05;
+                this.vx+=dx/dist*repel;
+                this.vy+=dy/dist*repel;
+            }
+        }
+
+        // Movement
+        this.vx*=0.95; this.vy*=0.95;
+        this.x+=this.vx; this.y+=this.vy;
+        this.x=Math.max(this.size,Math.min(canvas.width-this.size,this.x));
+        this.y=Math.max(this.size,Math.min(canvas.height-this.size,this.y));
+    }
+    draw(){
+        for(const t of this.tentacles){
+            const baseAngle=t.angle + Math.sin(Date.now()*0.003)*0.5;
+            ctx.strokeStyle=this.color;
+            ctx.lineWidth=2;
+            ctx.beginPath();
+            ctx.moveTo(this.x,this.y);
+            for(let s=1;s<=t.segments;s++){
+                const segLen=(t.length/t.segments)*s;
+                const tx=this.x+Math.cos(baseAngle+s*0.2)*segLen;
+                const ty=this.y+Math.sin(baseAngle+s*0.2)*segLen;
+                ctx.lineTo(tx,ty);
+            }
+            ctx.stroke();
+        }
+
+        ctx.fillStyle=this.color;
+        ctx.beginPath(); ctx.arc(this.x,this.y,this.size,0,Math.PI*2); ctx.fill();
+
+        ctx.fillStyle="#fff";
+        ctx.beginPath();
+        ctx.arc(this.x-this.size*0.3,this.y-this.size*0.2,this.size*0.15,0,Math.PI*2);
+        ctx.arc(this.x+this.size*0.3,this.y-this.size*0.2,this.size*0.15,0,Math.PI*2);
+        ctx.fill();
+        ctx.fillStyle="#000";
+        ctx.beginPath();
+        ctx.arc(this.x-this.size*0.3,this.y-this.size*0.2,this.size*0.07,0,Math.PI*2);
+        ctx.arc(this.x+this.size*0.3,this.y-this.size*0.2,this.size*0.07,0,Math.PI*2);
+        ctx.fill();
+    }
+    isDead(){ return this.age>this.maxAge || this.hunger>=1; }
+}
+
+class Food{
+    constructor(x,y){ this.x=x; this.y=y; this.size=5+Math.random()*5; this.age=0; this.maxAge=300; }
+    update(){ this.age++; }
+    draw(){ ctx.fillStyle="lime"; ctx.beginPath(); ctx.arc(this.x,this.y,this.size,0,Math.PI*2); ctx.fill(); }
+    isExpired(){ return this.age>this.maxAge; }
+}
+
+// ----- Random spawning -----
+function maybeSpawnCreature(){ if(Math.random()<0.01) creatures.push(new Creature(Math.random()*canvas.width,Math.random()*canvas.height)); }
+function maybeSpawnFood(){ if(Math.random()<0.02) food.push(new Food(Math.random()*canvas.width,Math.random()*canvas.height)); }
+
+// ----- Main loop -----
+function loop(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // Cursor glow
+    const glowSize=20;
+    const gradient=ctx.createRadialGradient(cursorX,cursorY,0,cursorX,cursorY,glowSize);
+    gradient.addColorStop(0,'rgba(100,200,255,0.4)');
+    gradient.addColorStop(1,'transparent');
+    ctx.fillStyle=gradient; ctx.beginPath(); ctx.arc(cursorX,cursorY,glowSize,0,Math.PI*2); ctx.fill();
+
+    maybeSpawnCreature();
+    maybeSpawnFood();
+
+    for(let i=creatures.length-1;i>=0;i--){ const c=creatures[i]; c.update(); c.draw(); if(c.isDead()) creatures.splice(i,1); }
+    for(let i=food.length-1;i>=0;i--){ const f=food[i]; f.update(); f.draw(); if(f.isExpired()) food.splice(i,1); }
+
+    document.getElementById('stats').textContent=`Score: ${score} | Creatures: ${creatures.length} | Food: ${food.length}`;
+    requestAnimationFrame(loop);
+}
+
+// ----- Start / Reset -----
+document.getElementById('startBtn').addEventListener('click',()=>{
+    const btn=document.getElementById('startBtn');
+    if(!isRunning){
+        isRunning=true;
+        btn.textContent="Reset";
+        // optional: spawn initial creatures
+        for(let i=0;i<3;i++) creatures.push(new Creature(Math.random()*canvas.width,Math.random()*canvas.height));
+        loop();
+    } else {
+        creatures=[];
+        food=[];
+        score=0;
+        // optional: spawn a few new creatures on reset
+        for(let i=0;i<3;i++) creatures.push(new Creature(Math.random()*canvas.width,Math.random()*canvas.height));
+    }
+});
+</script>
+</body>
+</html>
+
